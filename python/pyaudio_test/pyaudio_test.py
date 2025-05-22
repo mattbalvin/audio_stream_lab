@@ -4,9 +4,7 @@ import threading
 import time
 import os
 import sys
-import select
-import termios
-import tty
+from pynput import keyboard
 
 class AudioRecorder:
     def __init__(self):
@@ -20,7 +18,7 @@ class AudioRecorder:
         self.CHANNELS = 1
         self.RATE = 44100
         self.output_file = "output.wav"
-        self.terminal_settings = None
+        self.listener = None
 
     def list_audio_devices(self):
         print("\nAvailable Audio Input Devices:")
@@ -63,6 +61,26 @@ class AudioRecorder:
         print(f"\nRecording saved to {self.output_file}")
         print(f"Duration: {len(self.frames) * self.CHUNK / self.RATE:.2f} seconds")
 
+    def on_press(self, key):
+        try:
+            if key == keyboard.Key.space:
+                self.toggle_pause()
+            elif key == keyboard.KeyCode.from_char('q'):
+                self.stop_recording()
+                return False  # Stop listener
+        except AttributeError:
+            pass
+        return True
+
+    def start_keyboard_listener(self):
+        self.listener = keyboard.Listener(on_press=self.on_press)
+        self.listener.start()
+
+    def stop_keyboard_listener(self):
+        if self.listener:
+            self.listener.stop()
+            self.listener = None
+
     def start_recording(self, device_id):
         self.stream = self.p.open(
             format=self.FORMAT,
@@ -77,6 +95,7 @@ class AudioRecorder:
         self.recording = True
         self.stream.start_stream()
         print("\nRecording started. Press SPACE to pause/resume, Q to stop and save.")
+        self.start_keyboard_listener()
 
     def toggle_pause(self):
         self.paused = not self.paused
@@ -84,8 +103,8 @@ class AudioRecorder:
         print(f"Recording {status}")
 
     def stop_recording(self):
+        self.stop_keyboard_listener()
         if self.stream:
-            self.recording = False
             self.stream.stop_stream()
             self.stream.close()
             self.stream = None
@@ -93,19 +112,11 @@ class AudioRecorder:
             # Save the complete recording
             self.save_recording()
             self.frames = []  # Clear frames after saving
+            self.recording = False
 
     def cleanup(self):
+        self.stop_keyboard_listener()
         self.p.terminate()
-
-    def check_keyboard(self):
-        if select.select([sys.stdin], [], [], 0)[0]:
-            key = sys.stdin.read(1)
-            if key == ' ':  # Space
-                self.toggle_pause()
-            elif key == 'q':  # Q
-                self.stop_recording()
-                return False
-        return True
 
 def main():
     recorder = AudioRecorder()
@@ -116,10 +127,8 @@ def main():
         
         recorder.start_recording(device_id)
         
-        # Keep the main thread alive and check for keyboard input
+        # Keep the main thread alive
         while recorder.recording:
-            if not recorder.check_keyboard():
-                break
             time.sleep(0.1)
             
     except KeyboardInterrupt:
